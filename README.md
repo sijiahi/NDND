@@ -1,5 +1,6 @@
 # Named Data Networking Neighbor Discovery (NDND)
-
+## Features Added
+* Get filenames from local repo and advertise
 ## An Overview
 
 Named Data Networking proposes a fundamental change to the Internet’s architecture, moving from a point-to-point to a data-centric model.
