@@ -66,7 +66,7 @@ main(int argc, char** argv)
   po::options_description options("Required options");
   options.add_options()
     ("help,h", "print help message")
-    ("prefix,P", po::value<ndn::Name>(&opt.prefix), "prefix to register");
+    ("prefix,p", po::value<ndn::Name>(&opt.prefix), "prefix to register");
   po::variables_map vm;
   try {
     po::store(po::parse_command_line(argc, argv, options), vm);

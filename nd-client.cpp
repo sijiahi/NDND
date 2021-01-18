@@ -11,22 +11,35 @@
 #include <ndn-cxx/util/scheduler.hpp>
 #include <boost/asio.hpp>
 #include <sstream>
-
+#include "getFileName.cpp"
 #include "nd-packet-format.h"
 #include "nfdc-helpers.h"
 
+
+/////////////////////////////////////////////
+#include <boost/program_options/options_description.hpp>
+#include <boost/program_options/variables_map.hpp>
+#include <boost/program_options/parsers.hpp>
+/////////////////////////////////////////////
 using namespace ndn;
 using namespace ndn::ndnd;
 using namespace std;
-
+namespace po = boost::program_options;
+static void
+usage(std::ostream& os, const po::options_description& options)
+{
+  os << "Usage: Named Data Neighbor Discovery (NDND) Client\n"
+        "\n"
+     << options;
+}
 class Options
 {
 public:
   Options()
-    : m_prefix("/test/01/02")
+    : m_prefix("/test/Ubuntu/client00")
     , server_prefix("/ndn/nd")
     // , server_ip("127.0.0.1")
-    , server_ip("131.179.176.110")
+    , server_ip("192.168.29.146")
   {
   }
 public:
@@ -99,7 +112,7 @@ public:
   {
     if (!is_ready) {
       std::cout << "NDND (Client): not ready, try again" << std::endl;
-      m_scheduler->schedule(time::seconds(1), [this] {
+      m_scheduler->schedule(time::seconds(5), [this] {
           sendArrivalInterest();
       });
       return;
@@ -119,6 +132,40 @@ public:
     m_face.expressInterest(interest, nullptr, bind(&NDNDClient::onNack, this, _1, _2), //no expectation
                            nullptr); //no expectation
   }
+  void syncFileName(){
+          if (!is_ready) {
+      std::cout << "NDND (Client): not ready, try again" << std::endl;
+      m_scheduler->schedule(time::seconds(5), [this] {
+          syncFileName();
+      });
+      return;
+    }
+        std::string configPath = DEFAULT_CONFIG_FILE;
+        bool showImplicitDigest = false;
+        RepoEnumerator instance(configPath);
+        std::list<ndn::Name> file_names = instance.getFileNames();
+        for (auto name = file_names.begin();name!=file_names.end();name++){
+          sendNewFileInterest(*name);
+        }
+    }
+  void sendNewFileInterest(ndn::Name contentName)
+  {
+    Name name("/ndn/nd/file");
+    name.append((uint8_t*)&m_IP, sizeof(m_IP)).append((uint8_t*)&m_port, sizeof(m_port));
+    name.appendNumber(contentName.size()).append(contentName).appendTimestamp();
+
+    Interest interest(name);
+    interest.setInterestLifetime(30_s);
+    interest.setMustBeFresh(true);
+    interest.setNonce(4);
+    interest.setCanBePrefix(false); 
+
+    cout << "NDND (Client): Arrival Interest: " << interest << endl;
+
+    m_face.expressInterest(interest, nullptr, bind(&NDNDClient::onNack, this, _1, _2), //no expectation
+                           nullptr); //no expectation
+  }
+
 
   void registerSubPrefix()
   {
@@ -178,11 +225,12 @@ public:
       cout << "URI: " << ss.str() << endl;
 
       // Do not register route to myself
-      if (strcmp(inet_ntoa(*(in_addr*)(pResult->IpAddr)), inet_ntoa(m_IP)) == 0) {
-        cout << "My IP address returned" << endl;
+      std::string myIp = inet_ntoa(m_IP);
+      std::string resultIp = inet_ntoa(*(in_addr*)(pResult->IpAddr));
+      if (myIp == resultIp) {
+        cout << "My IP address returned"<<inet_ntoa(*(in_addr*)(pResult->IpAddr))<<inet_ntoa(m_IP)<< endl;
         continue;
       }
-
       addFace(ss.str());
       setStrategy(name.toUri(), BEST_ROUTE);
     }
@@ -205,7 +253,7 @@ public:
     Block response_block = data.getContent().blockFromValue();
     response_block.parse();
 
-    std::cout << response_block << std::endl;
+    std::cout << "Register Data Reply"<<response_block << std::endl;
 
     Block status_code_block = response_block.get(STATUS_CODE);
     Block status_text_block = response_block.get(STATUS_TEXT);
@@ -436,12 +484,14 @@ public:
     m_scheduler = new Scheduler(m_client->m_face.getIoService());
     m_client->registerSubPrefix();
     m_client->sendArrivalInterest();
+
     loop();
   }
 
   void loop() {
     m_client->sendSubInterest();
-    m_scheduler->schedule(time::seconds(3), [this] {
+    m_client->syncFileName();
+    m_scheduler->schedule(time::seconds(5), [this] {
       loop();
     });
   }
@@ -463,7 +513,35 @@ private:
 int
 main(int argc, char** argv)
 {
+  getLocalFileNames();
+  /*
+  std::string configPath = DEFAULT_CONFIG_FILE;
+  bool showImplicitDigest = false;
+  RepoEnumerator instance(configPath);
+  std::list<ndn::Name> file_names = instance.getFileNames();
+  std::list<ndn::Name>::iterator name;
+  for (name = file_names.begin();name!=file_names.end();name++){
+    std::cout<<name<<std::endl;
+  }
+  */
+  ////////////////////////////////////////////////////
   Options opt;
+  //////////////////////////////////////
+   po::options_description options("Required options");
+  options.add_options()
+    ("help,h", "print help message")
+    ("server_ip,ip", po::value<std::string>(&opt.server_ip), "server IP");
+  po::variables_map vm;
+  try {
+    po::store(po::parse_command_line(argc, argv, options), vm);
+    po::notify(vm);
+  }
+  catch (boost::program_options::error&) {
+    usage(std::cerr, options);
+    return 2;
+  }
+  ///////////////////////////////////////////////// 
   Program program(opt);
   program.m_client->m_face.processEvents();
+
 }

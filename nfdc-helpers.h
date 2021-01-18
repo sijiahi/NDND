@@ -88,7 +88,7 @@ prepareRibRegisterInterest(const Name& route_name, int face_id, KeyChain& keycha
   interest.setCanBePrefix(false);
   return interest;
 }
-
+//Prepare Face Creation!!!
 static Interest
 prepareFaceCreationInterest(const std::string& uri, KeyChain& keychain)
 {
@@ -104,7 +104,7 @@ prepareFaceCreationInterest(const std::string& uri, KeyChain& keychain)
   interest.setCanBePrefix(false);
   return interest;
 }
-
+//Destroy Face!!!
 static Interest
 prepareFaceDestroyInterest(int face_id, KeyChain& keychain)
 {

@@ -1,7 +1,14 @@
 // AUTHOR: Zhiyi Zhang
 // EMAIL: zhiyi@cs.ucla.edu
 // License: LGPL v3.0
-
+#include "nfdc-helpers.h"
+#include "nd-packet-format.h"
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <ifaddrs.h>
+#include <chrono>
+#include <iostream>
 #include <ndn-cxx/name.hpp>
 #include <ndn-cxx/face.hpp>
 #include <ndn-cxx/util/scheduler.hpp>
@@ -21,6 +28,8 @@ public:
   uint64_t tp;
   Name prefix;
   int faceId;
+  in_addr m_IP;
+  in_addr m_submask;
 };
 
 class NDServer
@@ -33,6 +42,13 @@ public:
   run();
 
 private:
+  void 
+  setMyIP();
+  void
+  fileSubscribeBack(const std::string& url);
+
+  void 
+  onfileConfirmed(const ndn::Data&);
   // if subscribe interest, return 0; if arrival interest, return 1
   int
   parseInterest(const Interest& request, DBEntry& entry);
@@ -63,6 +79,8 @@ private:
 
 private:
   Name m_prefix;
+  in_addr m_IP;
+  in_addr m_submask;
   uint64_t m_ttl;
   Face m_face;
   KeyChain m_keyChain;

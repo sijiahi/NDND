@@ -3,14 +3,7 @@
 // License: LGPL v3.0
 
 #include "server-daemon.hpp"
-#include "nfdc-helpers.h"
-#include "nd-packet-format.h"
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <ifaddrs.h>
-#include <chrono>
-#include <iostream>
+
 
 namespace ndn {
 namespace ndnd {
@@ -37,6 +30,76 @@ NDServer::findEntry(const Name& name)
   }
 }
 
+  void 
+  NDServer::setMyIP() 
+  {
+    struct ifaddrs *ifaddr, *ifa;
+    int family, s;
+    char host[NI_MAXHOST];
+    char netmask[NI_MAXHOST];
+    if (getifaddrs(&ifaddr) == -1) {
+        perror("getifaddrs");
+        exit(EXIT_FAILURE);
+    }
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+      if (ifa->ifa_addr == NULL)
+        continue;
+
+      s=getnameinfo(ifa->ifa_addr,sizeof(struct sockaddr_in),host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+      s=getnameinfo(ifa->ifa_netmask,sizeof(struct sockaddr_in),netmask, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+
+      if (ifa->ifa_addr->sa_family==AF_INET) {
+        if (s != 0) {
+          printf("getnameinfo() failed: %s\n", gai_strerror(s));
+          exit(EXIT_FAILURE);
+        }
+        if (ifa->ifa_name[0] == 'l' && ifa->ifa_name[1] == 'o')   // Loopback
+          continue;
+        inet_aton(host, &m_IP);
+        inet_aton(netmask, &m_submask);
+        break;
+      }
+    }
+    freeifaddrs(ifaddr);
+  }
+//////////////////////////////////////////////////////////
+void
+NDServer::fileSubscribeBack(const std::string& url)
+{
+  Name name(url);
+  for (auto it = m_db.begin(); it != m_db.end();) {
+    bool is_Prefix = it->prefix.isPrefixOf(name);
+    if (is_Prefix) {
+      std::cout << "NDND (RV): File Check: " << url << std::endl;
+      //name.appendTimestamp();
+      Interest interest(name);
+      interest.setInterestLifetime(30_s);
+      interest.setMustBeFresh(true);
+      interest.setNonce(4);
+      interest.setCanBePrefix(true);
+      // wait until entry confirmed
+      if (!it->confirmed) {
+        std::cout << "NDND (RV): File Entry not confirmed, try again 1 sec later: " << interest << std::endl;
+        m_scheduler->schedule(time::seconds(5), [this, url] {
+          fileSubscribeBack(url);
+        });
+        return;
+      }
+      m_face.expressInterest(interest,
+                            std::bind(&NDServer::onfileConfirmed, this, _2),
+                            std::bind(&NDServer::onNack, this, _1, _2),
+                            std::bind(&NDServer::onSubTimeout, this, _1));
+      m_scheduler->schedule(time::seconds(20), [this, url] {
+          fileSubscribeBack(url);
+      });
+    }
+    ++it;
+  }
+}
+
+///////////////////////////////////////////////////////////////////
+
 void
 NDServer::subscribeBack(const std::string& url)
 {
@@ -55,7 +118,7 @@ NDServer::subscribeBack(const std::string& url)
       // wait until entry confirmed
       if (!it->confirmed) {
         std::cout << "NDND (RV): Entry not confirmed, try again 1 sec later: " << interest << std::endl;
-        m_scheduler->schedule(time::seconds(1), [this, url] {
+        m_scheduler->schedule(time::seconds(5), [this, url] {
           subscribeBack(url);
         });
         return;
@@ -64,7 +127,7 @@ NDServer::subscribeBack(const std::string& url)
                             std::bind(&NDServer::onSubData, this, _2),
                             std::bind(&NDServer::onNack, this, _1, _2),
                             std::bind(&NDServer::onSubTimeout, this, _1));
-      m_scheduler->schedule(time::seconds(10), [this, url] {
+      m_scheduler->schedule(time::seconds(20), [this, url] {
           subscribeBack(url);
       });
     }
@@ -72,10 +135,20 @@ NDServer::subscribeBack(const std::string& url)
   }
 }
 
+
 void
 NDServer::onSubTimeout(const Interest& interest)
 {
   removeRoute(findEntry(interest.getName()));
+}
+
+void
+NDServer::onfileConfirmed(const Data& data)
+{
+  DBEntry& entry = findEntry(data.getName());
+  std::cout << "NDND (RV): File Updated/Confirmed from " << entry.prefix << std::endl;
+  auto ptr = data.getContent().value();
+  memcpy(entry.ip, ptr, sizeof(entry.ip));
 }
 
 void
@@ -124,7 +197,39 @@ NDServer::parseInterest(const Interest& interest, DBEntry& entry)
       subscribeBack(entry.prefix.toUri());
       return 1;
     }
+    ///////////////////////////////////////////////////////////////
+    ret = component.compare(Name::Component("file"));
+    if (ret == 0)
+    {
+      Name::Component comp;
+      // getIP
+      comp = name.get(i + 1);
+      memcpy(entry.ip, comp.value(), sizeof(entry.ip));
+      // getPort
+      comp = name.get(i + 2);
+      memcpy(&entry.port, comp.value(), sizeof(entry.port));
+      // getName
+      comp = name.get(i + 3);
+      int begin = i + 3;
+      Name prefix;
+      uint64_t name_size = comp.toNumber();
+      for (int j = 0; j < name_size; j++) {
+        prefix.append(name.get(begin + j + 1));
+      }
+      entry.prefix = prefix;
+
+      std::cout << "NDND (RV): Arrival NewFileName:" << entry.prefix.toUri() << std::endl;
+
+      // AddRoute and Subscribe Back
+      entry.confirmed = false;
+      m_db.push_back(entry);
+      addRoute(getFaceUri(entry), entry);
+      fileSubscribeBack(entry.prefix.toUri());
+      return 1;
+    }
+    ///////////////////////////////////////////////////////////////
   }
+
   // then it would be a Subscribe Interest
   return 0;
 }
@@ -132,6 +237,10 @@ NDServer::parseInterest(const Interest& interest, DBEntry& entry)
 void
 NDServer::run()
 {
+  setMyIP();
+  std::cout<<"Server started at"<<std::endl;
+  std::cout<<"                 Interface : "<<inet_ntoa(m_submask)<<std::endl;
+  std::cout<<"                 Address : "<<inet_ntoa(m_IP)<<std::endl;
   m_ttl = 30 * 1000;
   m_scheduler = new Scheduler(m_face.getIoService());
   m_face.processEvents();
@@ -155,7 +264,8 @@ NDServer::onNack(const Interest& interest, const lp::Nack& nack)
 
 void
 NDServer::onInterest(const Interest& request)
-{
+{std::cout<<"Received Interest"<<std::endl;
+
   DBEntry entry;
   int ret = parseInterest(request, entry);
   if (ret) {
