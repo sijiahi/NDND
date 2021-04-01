@@ -44,12 +44,19 @@ public:
 private:
   void 
   setMyIP();
+  /////////////////////////////////////
   void
   fileSubscribeBack(const std::string& url);
 
+  void
+  prefixSubscribeBack(const std::string& url);
+
   void 
   onfileConfirmed(const ndn::Data&);
+  void 
+  onprefixConfirmed(const ndn::Data&);
   // if subscribe interest, return 0; if arrival interest, return 1
+  /////////////////////////////////////////////////
   int
   parseInterest(const Interest& request, DBEntry& entry);
 

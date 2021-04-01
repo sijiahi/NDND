@@ -101,6 +101,41 @@ NDServer::fileSubscribeBack(const std::string& url)
 ///////////////////////////////////////////////////////////////////
 
 void
+NDServer::prefixSubscribeBack(const std::string& url)
+{
+  Name name(url);
+  for (auto it = m_db.begin(); it != m_db.end();) {
+    bool is_Prefix = it->prefix.isPrefixOf(name);
+    if (is_Prefix) {
+      std::cout << "NDND (RV): Prefix Check: " << url << std::endl;
+      //name.appendTimestamp();
+      Interest interest(name);
+      interest.setInterestLifetime(30_s);
+      interest.setMustBeFresh(true);
+      interest.setNonce(4);
+      interest.setCanBePrefix(true);
+      // wait until entry confirmed
+      if (!it->confirmed) {
+        std::cout << "NDND (RV): Prefix Entry not confirmed, try again 1 sec later: " << interest << std::endl;
+        m_scheduler->schedule(time::seconds(5), [this, url] {
+          prefixSubscribeBack(url);
+        });
+        return;
+      }
+      m_face.expressInterest(interest,
+                            std::bind(&NDServer::onprefixConfirmed, this, _2),
+                            std::bind(&NDServer::onNack, this, _1, _2),
+                            std::bind(&NDServer::onSubTimeout, this, _1));
+      m_scheduler->schedule(time::seconds(20), [this, url] {
+          prefixSubscribeBack(url);
+      });
+    }
+    ++it;
+  }
+}
+/////////////////////////////////////////////////////////////////////////////////
+
+void
 NDServer::subscribeBack(const std::string& url)
 {
   Name name(url);
@@ -150,7 +185,16 @@ NDServer::onfileConfirmed(const Data& data)
   auto ptr = data.getContent().value();
   memcpy(entry.ip, ptr, sizeof(entry.ip));
 }
-
+////////////////////////////////////////////////////////////
+void
+NDServer::onprefixConfirmed(const Data& data)
+{
+  DBEntry& entry = findEntry(data.getName());
+  std::cout << "NDND (RV): Prefix Updated/Confirmed from " << entry.prefix << std::endl;
+  auto ptr = data.getContent().value();
+  memcpy(entry.ip, ptr, sizeof(entry.ip));
+}
+////////////////////////////////////////////////////////////////
 void
 NDServer::onSubData(const Data& data)
 {
@@ -225,6 +269,36 @@ NDServer::parseInterest(const Interest& interest, DBEntry& entry)
       m_db.push_back(entry);
       addRoute(getFaceUri(entry), entry);
       fileSubscribeBack(entry.prefix.toUri());
+      return 1;
+    }
+    ///////////////////////////////////////////////////////////////
+    ret = component.compare(Name::Component("prefix"));
+    if (ret == 0)
+    {
+      Name::Component comp;
+      // getIP
+      comp = name.get(i + 1);
+      memcpy(entry.ip, comp.value(), sizeof(entry.ip));
+      // getPort
+      comp = name.get(i + 2);
+      memcpy(&entry.port, comp.value(), sizeof(entry.port));
+      // getName
+      comp = name.get(i + 3);
+      int begin = i + 3;
+      Name prefix;
+      uint64_t name_size = comp.toNumber();
+      for (int j = 0; j < name_size; j++) {
+        prefix.append(name.get(begin + j + 1));
+      }
+      entry.prefix = prefix;
+
+      std::cout << "NDND (RV): Arrival NewFileName:" << entry.prefix.toUri() << std::endl;
+
+      // AddRoute and Subscribe Back
+      entry.confirmed = false;
+      m_db.push_back(entry);
+      addRoute(getFaceUri(entry), entry);
+      prefixSubscribeBack(entry.prefix.toUri());
       return 1;
     }
     ///////////////////////////////////////////////////////////////

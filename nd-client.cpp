@@ -38,12 +38,14 @@ public:
   Options()
     : m_prefix("/test/Ubuntu/client00")
     , server_prefix("/ndn/nd")
+    , m_advertise_prefix("/local/advertise")
     // , server_ip("127.0.0.1")
     , server_ip("192.168.29.146")
   {
   }
 public:
   ndn::Name m_prefix;
+  ndn::Name m_advertise_prefix;
   ndn::Name server_prefix;
   string server_ip;
 };
@@ -52,9 +54,11 @@ public:
 class NDNDClient{
 public:
   NDNDClient(const Name& m_prefix, 
+            const Name& m_advertise_prefix,
              const Name& server_prefix, 
              const string& server_ip)
     : m_prefix(m_prefix)
+    , m_advertise_prefix(m_advertise_prefix)
     , m_server_prefix(server_prefix)
   {
     m_scheduler = new Scheduler(m_face.getIoService());
@@ -107,7 +111,32 @@ public:
     m_face.put(*data);
     cout << "NDND (Client): Publishing Data: " << *data << endl;
   }
-  
+   void onAdvertiseInterest(const Interest& interest)
+  {
+    if (!is_ready)
+      return;
+      //TODO: get add name to m_name details
+    std::cout<<"get stripped advertise interest Name"<<interest.getName()<<std::endl;
+    
+    ndn::Name name = interest.getName();
+    //qianzhuiming
+    int k = m_advertise_prefix.size();
+    while(k>0){
+      name.erase(0);
+      k-=1;
+    }
+    Name::Component component = name.get(0);
+    int ret = component.compare(Name::Component("leave"));
+    if (ret == 0)
+    {
+      //TODO delete prefix from 
+      m_chatinfo
+    std::cout<<"get stripped advertise interest Name"<<name<<std::endl;
+    m_chatinfo.push_back(name);
+    
+  }
+
+
   void sendArrivalInterest()
   {
     if (!is_ready) {
@@ -132,6 +161,40 @@ public:
     m_face.expressInterest(interest, nullptr, bind(&NDNDClient::onNack, this, _1, _2), //no expectation
                            nullptr); //no expectation
   }
+  //Autoomatically Sync chat info
+  void syncChatInfo(){
+    if (!is_ready) {
+      std::cout << "NDND (Client): not ready, try again" << std::endl;
+      m_scheduler->schedule(time::seconds(5), [this] {
+          syncChatInfo();
+      });
+      return;
+    }
+    std::list<ndn::Name>chat_infos = m_chatinfo;
+    for (auto name = chat_infos.begin();name!=chat_infos.end();name++){
+          sendNewPrefixInterest(*name);
+        }
+    
+  }
+
+void sendNewPrefixInterest(ndn::Name prefix)
+  {
+    Name name("/ndn/nd/prefix");
+    name.append((uint8_t*)&m_IP, sizeof(m_IP)).append((uint8_t*)&m_port, sizeof(m_port));
+    name.appendNumber(prefix.size()).append(prefix).appendTimestamp();
+
+    Interest interest(name);
+    interest.setInterestLifetime(30_s);
+    interest.setMustBeFresh(true);
+    interest.setNonce(4);
+    interest.setCanBePrefix(false); 
+
+    cout << "NDND (Client-new prefix): sending new prefix Interest: " << interest << endl;
+
+    m_face.expressInterest(interest, nullptr, bind(&NDNDClient::onNack, this, _1, _2), //no expectation
+                           nullptr); //no expectation
+  }
+  ///Automatically Sync file name with server TODO:Filter local NFD
   void syncFileName(){
           if (!is_ready) {
       std::cout << "NDND (Client): not ready, try again" << std::endl;
@@ -160,7 +223,7 @@ public:
     interest.setNonce(4);
     interest.setCanBePrefix(false); 
 
-    cout << "NDND (Client): Arrival Interest: " << interest << endl;
+    cout << "NDND (Client): Sending new file Interest: " << interest << endl;
 
     m_face.expressInterest(interest, nullptr, bind(&NDNDClient::onNack, this, _1, _2), //no expectation
                            nullptr); //no expectation
@@ -174,7 +237,14 @@ public:
     m_face.setInterestFilter(InterestFilter(name), bind(&NDNDClient::onSubInterest, this, _2), nullptr);
     cout << "NDND (Client): Register Prefix: " << name << endl;
   }
-
+//Listen for advertise request
+  void registerAdvertisePrefix()
+  {
+    Name name(m_advertise_prefix);
+    m_face.setInterestFilter(InterestFilter(name), bind(&NDNDClient::onAdvertiseInterest, this, _2), nullptr);
+    //TODO get prefix out and register
+    cout << "NDND (Client-Adertise): Register Prefix: " << name << endl;
+  }
 
   void sendSubInterest()
   {
@@ -195,6 +265,7 @@ public:
                            bind(&NDNDClient::onTimeout, this, _1));
   }
 
+ 
 // private:
   void onSubData(const Interest& interest, const Data& data)
   {
@@ -279,7 +350,6 @@ public:
 
       std::cout << "\nRegistration of route succeeded:" << std::endl;
       std::cout << "Status text: " << response_text << std::endl;
-
       std::cout << "Route name: " << route_name.toUri() << std::endl;
       std::cout << "Face id: " << face_id << std::endl;
       std::cout << "Origin: " << origin << std::endl;
@@ -457,6 +527,7 @@ public:
   Face m_face;
   KeyChain m_keyChain;
   Name m_prefix;
+  Name m_advertise_prefix;
   Name m_server_prefix;
   in_addr m_IP;
   in_addr m_submask;
@@ -467,6 +538,8 @@ public:
   uint8_t m_buffer[4096];
   size_t m_len;
   std::map<std::string, std::string> m_uri_to_prefix;
+  //Sync up names to advertise
+  std::list<ndn::Name> m_chatinfo;
 };
 
 
@@ -478,11 +551,13 @@ public:
   {
     // Init client
     m_client = new NDNDClient(m_options.m_prefix,
+                              m_options.m_advertise_prefix,
                               m_options.server_prefix, 
                               m_options.server_ip);
 
     m_scheduler = new Scheduler(m_client->m_face.getIoService());
     m_client->registerSubPrefix();
+    m_client->registerAdvertisePrefix();
     m_client->sendArrivalInterest();
 
     loop();
@@ -491,6 +566,7 @@ public:
   void loop() {
     m_client->sendSubInterest();
     m_client->syncFileName();
+    m_client->syncChatInfo();
     m_scheduler->schedule(time::seconds(5), [this] {
       loop();
     });
@@ -513,7 +589,7 @@ private:
 int
 main(int argc, char** argv)
 {
-  getLocalFileNames();
+  //getLocalFileNames();
   /*
   std::string configPath = DEFAULT_CONFIG_FILE;
   bool showImplicitDigest = false;
