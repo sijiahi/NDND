@@ -111,6 +111,7 @@ public:
     m_face.put(*data);
     cout << "NDND (Client): Publishing Data: " << *data << endl;
   }
+  ////////////////////////////////////////////////////////////////
    void onAdvertiseInterest(const Interest& interest)
   {
     if (!is_ready)
@@ -129,12 +130,17 @@ public:
     int ret = component.compare(Name::Component("leave"));
     if (ret == 0)
     {
-      //TODO delete prefix from 
-      m_chatinfo
+      //TODO delete prefix from m_name
+      name.erase(0);
+      m_chatinfo.remove(name);
+    std::cout<<"delete"<<name<<std::endl;
+    }
+    else{
     std::cout<<"get stripped advertise interest Name"<<name<<std::endl;
     m_chatinfo.push_back(name);
-    
+    }
   }
+  ////////////////////////////////////////////////////////////////////////////////////////////
 
 
   void sendArrivalInterest()
