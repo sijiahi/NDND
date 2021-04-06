@@ -45,6 +45,12 @@ private:
   void 
   setMyIP();
   /////////////////////////////////////
+  void 
+  onTimeout(const Interest& interest);
+  void 
+  onSetStrategyDataReply(const Interest& interest, const Data& data);
+  void 
+  setStrategy(const std::string& uri, const std::string& strategy);
   void
   fileSubscribeBack(const std::string& url);
 

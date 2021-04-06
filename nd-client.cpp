@@ -15,7 +15,6 @@
 #include "nd-packet-format.h"
 #include "nfdc-helpers.h"
 
-
 /////////////////////////////////////////////
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -39,8 +38,7 @@ public:
     : m_prefix("/test/Ubuntu/client00")
     , server_prefix("/ndn/nd")
     , m_advertise_prefix("/local/advertise")
-    // , server_ip("127.0.0.1")
-    , server_ip("192.168.29.146")
+    , server_ip("192.168.29.145")
   {
   }
 public:
@@ -80,6 +78,7 @@ public:
   void registerRoute(const Name& route_name, int face_id,
                      int cost = 0, bool is_server_route = false) 
   {
+   
     Interest interest = prepareRibRegisterInterest(route_name, face_id, m_keyChain, cost);
     m_face.expressInterest(
       interest,
@@ -109,7 +108,7 @@ public:
     // m_keyChain.sign(*m_data, signInfo);
     data->setFreshnessPeriod(time::milliseconds(4000));
     m_face.put(*data);
-    cout << "NDND (Client): Publishing Data: " << *data << endl;
+    cout << "NDND (Client): Publishing my ip: " << inet_ntoa(m_IP)<< endl;
   }
   ////////////////////////////////////////////////////////////////
    void onAdvertiseInterest(const Interest& interest)
@@ -146,8 +145,8 @@ public:
   void sendArrivalInterest()
   {
     if (!is_ready) {
-      std::cout << "NDND (Client): not ready, try again" << std::endl;
-      m_scheduler->schedule(time::seconds(5), [this] {
+      std::cout << "NDND (Client): not ready, try again in 1 mins" << std::endl;
+      m_scheduler->schedule(time::seconds(60), [this] {
           sendArrivalInterest();
       });
       return;
@@ -162,7 +161,7 @@ public:
     interest.setNonce(4);
     interest.setCanBePrefix(false); 
 
-    cout << "NDND (Client): Arrival Interest: " << interest << endl;
+    cout << "NDND (Client):Sending Arrival Interest: " << interest << endl;
 
     m_face.expressInterest(interest, nullptr, bind(&NDNDClient::onNack, this, _1, _2), //no expectation
                            nullptr); //no expectation
@@ -170,8 +169,8 @@ public:
   //Autoomatically Sync chat info
   void syncChatInfo(){
     if (!is_ready) {
-      std::cout << "NDND (Client): not ready, try again" << std::endl;
-      m_scheduler->schedule(time::seconds(5), [this] {
+      std::cout << "NDND (Client): not ready, try again in 1 mins" << std::endl;
+      m_scheduler->schedule(time::seconds(60), [this] {
           syncChatInfo();
       });
       return;
@@ -195,7 +194,7 @@ void sendNewPrefixInterest(ndn::Name prefix)
     interest.setNonce(4);
     interest.setCanBePrefix(false); 
 
-    cout << "NDND (Client-new prefix): sending new prefix Interest: " << interest << endl;
+    cout << "NDND (Client-new prefix): Sending new prefix Interest: " << interest << endl;
 
     m_face.expressInterest(interest, nullptr, bind(&NDNDClient::onNack, this, _1, _2), //no expectation
                            nullptr); //no expectation
@@ -203,8 +202,8 @@ void sendNewPrefixInterest(ndn::Name prefix)
   ///Automatically Sync file name with server TODO:Filter local NFD
   void syncFileName(){
           if (!is_ready) {
-      std::cout << "NDND (Client): not ready, try again" << std::endl;
-      m_scheduler->schedule(time::seconds(5), [this] {
+      std::cout << "NDND (Client): not ready, try again in 1 minutes" << std::endl;
+      m_scheduler->schedule(time::seconds(60), [this] {
           syncFileName();
       });
       return;
@@ -264,7 +263,7 @@ void sendNewPrefixInterest(ndn::Name prefix)
     interest.setMustBeFresh(true);
     interest.setNonce(4);
     interest.setCanBePrefix(false);
-
+cout << "NDND (Client): Sending /ndn/nd Request: " << interest << endl;
     m_face.expressInterest(interest,
                            bind(&NDNDClient::onSubData, this, _1, _2),
                            bind(&NDNDClient::onNack, this, _1, _2),
@@ -401,12 +400,14 @@ void sendNewPrefixInterest(ndn::Name prefix)
 
       auto it = m_uri_to_prefix.find(uri);
       if (is_server_face) {
-        registerRoute(Name("/ndn/nd"), face_id, 10, is_server_face);
+        //TODO: Add cost
+        //RegisterRounte(Name, face_id,cost, is_server_face)
+        registerRoute(Name("/ndn/nd"), face_id,10, is_server_face);
         m_server_faceid = face_id;
       }
       else if (it != m_uri_to_prefix.end()) {
         registerRoute(it->second, face_id, 0, is_server_face);
-        registerRoute(it->second, m_server_faceid, 10, is_server_face);
+        //registerRoute(it->second, m_server_faceid, 10, is_server_face);
       }
       else {
 	      std::cerr << "Failed to find prefix for uri " << uri << std::endl;
@@ -448,7 +449,7 @@ void sendNewPrefixInterest(ndn::Name prefix)
   void addFace(const string& uri, bool is_server_face = false) 
   {
     printf("NDND (Client): Adding face: %s\n", uri.c_str());
-    Interest interest = prepareFaceCreationInterest(uri, m_keyChain);
+    Interest interest = prepareFaceCreationInterest(uri, m_keyChain,0);
     m_face.expressInterest(
       interest,
       bind(&NDNDClient::onAddFaceDataReply, this, _1, _2, uri, is_server_face),
@@ -564,16 +565,20 @@ public:
     m_scheduler = new Scheduler(m_client->m_face.getIoService());
     m_client->registerSubPrefix();
     m_client->registerAdvertisePrefix();
-    m_client->sendArrivalInterest();
-
+    m_scheduler->schedule(time::seconds(5), [this] {
     loop();
+    });
+    //loop();
   }
 
   void loop() {
+    std::cout<<"Next sync start"<<std::endl;
     m_client->sendSubInterest();
     m_client->syncFileName();
     m_client->syncChatInfo();
-    m_scheduler->schedule(time::seconds(5), [this] {
+    m_client->sendArrivalInterest();
+
+    m_scheduler->schedule(time::seconds(180), [this] {
       loop();
     });
   }

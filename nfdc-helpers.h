@@ -22,25 +22,28 @@ make_rib_unregeister_interest_parameter(const Name& route_name, int face_id)
   block.push_back(route_name_block);
   block.push_back(face_id_block);
   block.push_back(origin_block);
-
+  /////////////////////////////////////////////////////
+  /*
   std::cerr << "Route name block:" << std::endl;
   std::cerr << route_name_block << std::endl;
   std::cerr << "Face id block:" << std::endl;
   std::cerr << face_id_block << std::endl;
   std::cerr << "Control parameters block:" << std::endl;
   std::cerr << block << std::endl;
+  */
+  ////////////////////////////////////////////////////
   block.encode();
   return block;
 }
 
 static Block
-make_rib_interest_parameter(const Name& route_name, int face_id)
+make_rib_interest_parameter(const Name& route_name, int face_id, int cost)
 {
   auto block = makeEmptyBlock(CONTROL_PARAMETERS);
   Block route_name_block = route_name.wireEncode();
   Block face_id_block = makeNonNegativeIntegerBlock(FACE_ID, face_id);
   Block origin_block = makeNonNegativeIntegerBlock(ORIGIN, 0xFF);
-  Block cost_block = makeNonNegativeIntegerBlock(COST, 0);
+  Block cost_block = makeNonNegativeIntegerBlock(COST, cost);
   Block flags_block = makeNonNegativeIntegerBlock(FLAGS, 0x01);
 
   block.push_back(route_name_block);
@@ -48,13 +51,16 @@ make_rib_interest_parameter(const Name& route_name, int face_id)
   block.push_back(origin_block);
   block.push_back(cost_block);
   block.push_back(flags_block);
-
+  ///////////////////////////////////////////////////////////////////
+  /*
   std::cerr << "Route name block:" << std::endl;
   std::cerr << route_name_block << std::endl;
   std::cerr << "Face id block:" << std::endl;
   std::cerr << face_id_block << std::endl;
   std::cerr << "Control parameters block:" << std::endl;
   std::cerr << block << std::endl;
+  */
+  //////////////////////////////////////////////////////////////////////
   block.encode();
   return block;
 }
@@ -66,7 +72,6 @@ prepareRibUnregisterInterest(const Name& route_name, int face_id, KeyChain& keyc
   Name name("/localhost/nfd/rib/unregister");
   Block control_params = make_rib_unregeister_interest_parameter(route_name, face_id);
   name.append(control_params);
-
   security::CommandInterestSigner signer(keychain);
   Interest interest = signer.makeCommandInterest(name);
   interest.setMustBeFresh(true);
@@ -79,9 +84,9 @@ prepareRibRegisterInterest(const Name& route_name, int face_id, KeyChain& keycha
                            int cost = 0)
 {
   Name name("/localhost/nfd/rib/register");
-  Block control_params = make_rib_interest_parameter(route_name, face_id);
+  Block control_params = make_rib_interest_parameter(route_name, face_id,cost);
   name.append(control_params);
-
+  
   security::CommandInterestSigner signer(keychain);
   Interest interest = signer.makeCommandInterest(name);
   interest.setMustBeFresh(true);
@@ -90,11 +95,12 @@ prepareRibRegisterInterest(const Name& route_name, int face_id, KeyChain& keycha
 }
 //Prepare Face Creation!!!
 static Interest
-prepareFaceCreationInterest(const std::string& uri, KeyChain& keychain)
+prepareFaceCreationInterest(const std::string& uri, KeyChain& keychain, int cost= 0)
 {
   Name name("/localhost/nfd/faces/create");
   auto control_block = makeEmptyBlock(CONTROL_PARAMETERS);
   control_block.push_back(makeStringBlock(URI, uri));
+
   control_block.encode();
   name.append(control_block);
 

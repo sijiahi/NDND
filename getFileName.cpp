@@ -137,7 +137,7 @@ RepoEnumerator::getFileNames()
     int rc = stmt.step();
     if (rc == SQLITE_ROW) {
       Data data(stmt.getBlock(0));
-      res.push_back(data.getName());
+      res.push_back(data.getName()); 
     }
     else if (rc == SQLITE_DONE) {
       break;

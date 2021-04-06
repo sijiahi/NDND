@@ -80,17 +80,18 @@ NDServer::fileSubscribeBack(const std::string& url)
       interest.setCanBePrefix(true);
       // wait until entry confirmed
       if (!it->confirmed) {
-        std::cout << "NDND (RV): File Entry not confirmed, try again 1 sec later: " << interest << std::endl;
-        m_scheduler->schedule(time::seconds(5), [this, url] {
+        std::cout << "NDND (RV): File Entry not confirmed, try again 30 secs later: " << interest << std::endl;
+        m_scheduler->schedule(time::seconds(30), [this, url] {
           fileSubscribeBack(url);
         });
         return;
       }
+      // Check file every 2 seconds
       m_face.expressInterest(interest,
                             std::bind(&NDServer::onfileConfirmed, this, _2),
                             std::bind(&NDServer::onNack, this, _1, _2),
                             std::bind(&NDServer::onSubTimeout, this, _1));
-      m_scheduler->schedule(time::seconds(20), [this, url] {
+      m_scheduler->schedule(time::seconds(120), [this, url] {
           fileSubscribeBack(url);
       });
     }
@@ -116,8 +117,8 @@ NDServer::prefixSubscribeBack(const std::string& url)
       interest.setCanBePrefix(true);
       // wait until entry confirmed
       if (!it->confirmed) {
-        std::cout << "NDND (RV): Prefix Entry not confirmed, try again 1 sec later: " << interest << std::endl;
-        m_scheduler->schedule(time::seconds(5), [this, url] {
+        std::cout << "NDND (RV): Prefix Entry not confirmed, try again 30 sec later: " << interest << std::endl;
+        m_scheduler->schedule(time::seconds(30), [this, url] {
           prefixSubscribeBack(url);
         });
         return;
@@ -126,7 +127,7 @@ NDServer::prefixSubscribeBack(const std::string& url)
                             std::bind(&NDServer::onprefixConfirmed, this, _2),
                             std::bind(&NDServer::onNack, this, _1, _2),
                             std::bind(&NDServer::onSubTimeout, this, _1));
-      m_scheduler->schedule(time::seconds(20), [this, url] {
+      m_scheduler->schedule(time::seconds(120), [this, url] {
           prefixSubscribeBack(url);
       });
     }
@@ -152,8 +153,8 @@ NDServer::subscribeBack(const std::string& url)
       interest.setCanBePrefix(false);
       // wait until entry confirmed
       if (!it->confirmed) {
-        std::cout << "NDND (RV): Entry not confirmed, try again 1 sec later: " << interest << std::endl;
-        m_scheduler->schedule(time::seconds(5), [this, url] {
+        std::cout << "NDND (RV): Entry not confirmed, try again 30 sec later: " << interest << std::endl;
+        m_scheduler->schedule(time::seconds(30), [this, url] {
           subscribeBack(url);
         });
         return;
@@ -162,7 +163,7 @@ NDServer::subscribeBack(const std::string& url)
                             std::bind(&NDServer::onSubData, this, _2),
                             std::bind(&NDServer::onNack, this, _1, _2),
                             std::bind(&NDServer::onSubTimeout, this, _1));
-      m_scheduler->schedule(time::seconds(20), [this, url] {
+      m_scheduler->schedule(time::seconds(120), [this, url] {
           subscribeBack(url);
       });
     }
@@ -176,7 +177,7 @@ NDServer::onSubTimeout(const Interest& interest)
 {
   removeRoute(findEntry(interest.getName()));
 }
-
+///////////////////////////////////////////////////////////////////
 void
 NDServer::onfileConfirmed(const Data& data)
 {
@@ -184,6 +185,9 @@ NDServer::onfileConfirmed(const Data& data)
   std::cout << "NDND (RV): File Updated/Confirmed from " << entry.prefix << std::endl;
   auto ptr = data.getContent().value();
   memcpy(entry.ip, ptr, sizeof(entry.ip));
+    //Do not register entry within server, or server might get crowded
+    //TODO:a function to remove entry from NFD but not remove entry from DB
+  //removeRoute(findEntry(data.getName()));
 }
 ////////////////////////////////////////////////////////////
 void
@@ -193,6 +197,8 @@ NDServer::onprefixConfirmed(const Data& data)
   std::cout << "NDND (RV): Prefix Updated/Confirmed from " << entry.prefix << std::endl;
   auto ptr = data.getContent().value();
   memcpy(entry.ip, ptr, sizeof(entry.ip));
+  //Do not register entry within server, or server might get crowded
+//removeRoute(findEntry(data.getName()));
 }
 ////////////////////////////////////////////////////////////////
 void
@@ -301,11 +307,13 @@ NDServer::parseInterest(const Interest& interest, DBEntry& entry)
       prefixSubscribeBack(entry.prefix.toUri());
       return 1;
     }
+
     ///////////////////////////////////////////////////////////////
   }
-
+    //if its not a register request, this must be a info request,return 0 to continue
+    return 0;
   // then it would be a Subscribe Interest
-  return 0;
+  //return 0;
 }
 
 void
@@ -326,8 +334,42 @@ NDServer::registerPrefix(const Name& prefix)
   m_prefix = prefix;
   auto prefixId = m_face.setInterestFilter(InterestFilter(m_prefix),
                                            bind(&NDServer::onInterest, this, _2), nullptr);
+  setStrategy(prefix.toUri(), MULTICAST);
+
+}
+///////////////////////////////////////////////////////////////
+  void NDServer::onSetStrategyDataReply(const Interest& interest, const Data& data) 
+  {
+    Block response_block = data.getContent().blockFromValue();
+    response_block.parse();
+    int responseCode = readNonNegativeIntegerAs<int>(response_block.get(STATUS_CODE));
+    std::string responseTxt = readString(response_block.get(STATUS_TEXT));
+
+    if (responseCode == OK) {
+      Block status_parameter_block = response_block.get(CONTROL_PARAMETERS);
+      status_parameter_block.parse();
+      std::cout << "\nSet strategy succeeded." << std::endl;
+    } else {
+      std::cout << "\nSet strategy failed." << std::endl;
+      std::cout << "Status text: " << responseTxt << std::endl;
+    }
+  }
+void NDServer::setStrategy(const std::string& uri, const std::string& strategy) 
+{
+  Interest interest = prepareStrategySetInterest(uri, strategy, m_keyChain);
+  m_face.expressInterest(
+    interest,
+    bind(&NDServer::onSetStrategyDataReply, this, _1, _2),
+    bind(&NDServer::onNack, this, _1, _2),
+    bind(&NDServer::onTimeout, this, _1));
 }
 
+ void NDServer::onTimeout(const Interest& interest)
+  {
+    std::cout << "Timeout " << interest << std::endl;
+  }
+
+  /////////////////////////////////////////////////////////////////
 void 
 NDServer::onNack(const Interest& interest, const lp::Nack& nack)
 {
@@ -338,12 +380,12 @@ NDServer::onNack(const Interest& interest, const lp::Nack& nack)
 
 void
 NDServer::onInterest(const Interest& request)
-{std::cout<<"Received Interest"<<std::endl;
-
+{
   DBEntry entry;
   int ret = parseInterest(request, entry);
   if (ret) {
     // arrival interest
+    //std::cout<<request.getName()<<std::endl;
     return;
   }
   Buffer contentBuf;
@@ -367,6 +409,7 @@ NDServer::onInterest(const Interest& request)
 
       for (int i = 0; i < sizeof(struct RESULT); i++) {
         contentBuf.push_back(*((uint8_t*)&result + i));
+        std::cout << "NDND (RV): Pushing Back one record " << std::endl;
       }
       auto block = item.prefix.wireEncode();
       for (int i =0; i < block.size(); i++) {
@@ -488,8 +531,8 @@ NDServer::onData(const Data& data, DBEntry& entry)
       std::cout << responseCode << " " << responseTxt
                 << ": Added Face (FaceId: " << entry.faceId
                 << std::endl;
-
-      auto Interest = prepareRibRegisterInterest(entry.prefix, entry.faceId, m_keyChain);
+////////Adding rib entry to client and files with link cost of 10
+      auto Interest = prepareRibRegisterInterest(entry.prefix, entry.faceId, m_keyChain,10);
       m_face.expressInterest(Interest,
                              std::bind(&NDServer::onData, this, _2, entry),
                              nullptr, nullptr);
