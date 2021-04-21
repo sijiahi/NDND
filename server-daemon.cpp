@@ -313,7 +313,7 @@ NDServer::parseInterest(const Interest& interest, DBEntry& entry)
     //if its not a register request, this must be a info request,return 0 to continue
     return 0;
   // then it would be a Subscribe Interest
-  //return 0;
+  //return 0processEvents
 }
 
 void
